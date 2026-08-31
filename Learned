@@ -1,0 +1,11 @@
+What I learned
+The biggest challenge was handling the massive size of the NOAA CSV file on Windows. 
+Direct conversion to GeoParquet using ogr2ogr often crashed the terminal or produced files with missing geometry due to memory limits. 
+I learned that converting to GeoJSON first is a much more stable intermediate step. 
+GeoJSON is a standard, analysis-ready format that preserves geometry perfectly and works reliably in QGIS, making it a superior choice for this specific dataset and OS environment.
+
+Stack
+bash
+curl
+GDAL / ogr2ogr
+GeoJSON (Primary), GeoParquet (Secondary)
