@@ -1,0 +1,86 @@
+#!/bin/bash
+set -euo pipefail
+
+# ==========================================
+# NOAA Storm Events Pipeline (Part 1)
+# ==========================================
+
+# --- Configuration ---
+YEAR="2025"
+# Using the specific 2025 file you provided
+URL="https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/StormEvents_details-ftp_v1.0_d${YEAR}_c20260819.csv.gz"
+RAW_FILE="StormEvents_details-ftp_v1.0_d${YEAR}_c20260819.csv.gz"
+CSV_FILE="StormEvents_details-ftp_v1.0_d${YEAR}_c20260819.csv"
+
+# --- Directories ---
+mkdir -p data/raw data/processed
+
+echo "=== NOAA Storm Events Pipeline (2025) ==="
+
+# --- Step 1: Download ---
+RAW_PATH="data/raw/${RAW_FILE}"
+if [ ! -f "$RAW_PATH" ]; then
+    echo "[1/4] Downloading data..."
+    curl -L -o "$RAW_PATH" "$URL" || { echo "❌ Download failed"; exit 1; }
+    echo "✓ Download complete"
+else
+    echo "[1/4] File exists, skipping download."
+fi
+
+# --- Step 2: Extract ---
+CSV_PATH="data/raw/${CSV_FILE}"
+if [ ! -f "$CSV_PATH" ]; then
+    echo "[2/4] Extracting CSV..."
+    gunzip -k "$RAW_PATH" || { echo "❌ Extraction failed"; exit 1; }
+    echo "✓ Extraction complete"
+else
+    echo "[2/4] CSV exists, skipping extraction."
+fi
+
+# --- Step 3: Convert to GeoJSON (Reliable Format) ---
+echo "[3/4] Converting to GeoJSON..."
+rm -f "data/processed/storms_${YEAR}.geojson" 2>/dev/null || true
+
+# Try LON/LAT first, then LONGITUDE/LATITUDE
+if head -1 "$CSV_PATH" | grep -q "LON"; then
+    X_COL="LON"
+    Y_COL="LAT"
+else
+    X_COL="LONGITUDE"
+    Y_COL="LATITUDE"
+fi
+
+ogr2ogr -f "GeoJSON" "data/processed/storms_${YEAR}.geojson" "$CSV_PATH" \
+    -oo "X_POSSIBLE_NAMES=${X_COL}" \
+    -oo "Y_POSSIBLE_NAMES=${Y_COL}" \
+    -nlt POINT \
+    -skipfailures
+
+if [ ! -f "data/processed/storms_${YEAR}.geojson" ]; then
+    echo "❌ GeoJSON conversion failed."
+    exit 1
+fi
+echo "✓ GeoJSON created"
+
+# --- Step 4: Convert to GeoParquet (Attempt) ---
+echo "[4/4] Attempting GeoParquet conversion..."
+rm -f "data/processed/storms_${YEAR}.parquet" 2>/dev/null || true
+
+# Try Arrow API for stability
+ogr2ogr -f "Parquet" "data/processed/storms_${YEAR}.parquet" "data/processed/storms_${YEAR}.geojson" \
+    --config OGR2OGR_USE_ARROW_API YES \
+    -skipfailures
+
+if [ -f "data/processed/storms_${YEAR}.parquet" ]; then
+    PARQUET_SIZE=$(ls -lh "data/processed/storms_${YEAR}.parquet" | awk '{print $5}')
+    echo "✓ GeoParquet created (Size: $PARQUET_SIZE)"
+else
+    echo "⚠ GeoParquet conversion failed (common on Windows). Using GeoJSON as primary format."
+fi
+
+echo ""
+echo "=== Pipeline Complete ==="
+echo "Output files in data/processed/:"
+ls -lh "data/processed/"
+echo ""
+echo "Open 'storms_${YEAR}.geojson' in QGIS for best results."
